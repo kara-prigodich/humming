@@ -331,6 +331,13 @@ HTML = """<!doctype html>
     .filter-actions { margin-top: .75rem; display: flex; align-items: center; gap: .75rem; }
     .filter-count   { font-size: .8rem; color: #555; }
     #filter-btn.has-filters { background: #1d4ed8; }
+    .checkbox-list { display: flex; flex-direction: column; gap: .25rem; padding: .3rem 0; }
+    .checkbox-list label {
+      display: flex; align-items: center; gap: .4rem;
+      font-size: .85rem; font-weight: 400; text-transform: none;
+      letter-spacing: 0; color: #1a1a2e; cursor: pointer;
+    }
+    .checkbox-list input[type="checkbox"] { cursor: pointer; accent-color: #4f6bed; }
 
     /* ── Gantt ── */
     #gantt-wrap { padding: 1.5rem 2rem 2rem; }
@@ -356,7 +363,7 @@ HTML = """<!doctype html>
   </header>
 
   <div id="controls">
-    <button id="pull-btn" onclick="loadData('/api/refresh')">Pull Latest</button>
+    <button id="pull-btn" onclick="loadData('/api/refresh')">Refresh</button>
     <button id="filter-btn" onclick="toggleFilters()">Filters</button>
     <div id="spinner"></div>
     <span id="status"></span>
@@ -374,25 +381,23 @@ HTML = """<!doctype html>
       </div>
       <div class="filter-group">
         <label>Experiment Status</label>
-        <select id="f-exp-status" onchange="onFilter()">
-          <option value="">All</option>
-          <option>Approved</option>
-          <option>In Progress</option>
-          <option>On Hold</option>
-          <option>Denied</option>
-          <option>Invalid Dates</option>
-        </select>
+        <div class="checkbox-list">
+          <label><input type="checkbox" name="f-exp-status" value="Approved"      onchange="onFilter()"> Approved</label>
+          <label><input type="checkbox" name="f-exp-status" value="In Progress"   onchange="onFilter()"> In Progress</label>
+          <label><input type="checkbox" name="f-exp-status" value="On Hold"       onchange="onFilter()"> On Hold</label>
+          <label><input type="checkbox" name="f-exp-status" value="Denied"        onchange="onFilter()"> Denied</label>
+          <label><input type="checkbox" name="f-exp-status" value="Invalid Dates" onchange="onFilter()"> Invalid Dates</label>
+        </div>
       </div>
       <div class="filter-group">
         <label>FS Status</label>
-        <select id="f-fs-status" onchange="onFilter()">
-          <option value="">All</option>
-          <option value="16">Approved</option>
-          <option value="2">Open</option>
-          <option value="9">On Hold</option>
-          <option value="4">Resolved</option>
-          <option value="5">Closed</option>
-        </select>
+        <div class="checkbox-list">
+          <label><input type="checkbox" name="f-fs-status" value="16" onchange="onFilter()"> Approved</label>
+          <label><input type="checkbox" name="f-fs-status" value="2"  onchange="onFilter()"> Open</label>
+          <label><input type="checkbox" name="f-fs-status" value="9"  onchange="onFilter()"> On Hold</label>
+          <label><input type="checkbox" name="f-fs-status" value="4"  onchange="onFilter()"> Resolved</label>
+          <label><input type="checkbox" name="f-fs-status" value="5"  onchange="onFilter()"> Closed</label>
+        </div>
       </div>
       <div class="filter-group">
         <label>Start Date from</label>
@@ -506,9 +511,11 @@ HTML = """<!doctype html>
     let _filterOpen = false;
 
     // ── Filters ──────────────────────────────────────────────────────────────
-    const FILTER_IDS = ['f-subject','f-application','f-exp-status','f-fs-status',
+    const FILTER_TEXT_IDS = ['f-subject','f-application',
       'f-start-from','f-start-to','f-end-from','f-end-to',
       'f-dr-min','f-dr-max','f-dso-min','f-dso-max','f-die-min','f-die-max'];
+    const FILTER_CB_NAMES = ['f-exp-status','f-fs-status'];
+    const checkedValues = name => [...document.querySelectorAll(`input[name="${name}"]:checked`)].map(el => el.value);
 
     function toggleFilters() {
       _filterOpen = !_filterOpen;
@@ -516,26 +523,26 @@ HTML = """<!doctype html>
     }
 
     function applyFilters(tickets) {
-      const s  = v => document.getElementById(v).value;
-      const subject  = s('f-subject').trim().toLowerCase();
-      const app      = s('f-application').trim().toLowerCase();
-      const expSt    = s('f-exp-status');
-      const fsSt     = s('f-fs-status');
-      const stFrom   = s('f-start-from'),  stTo  = s('f-start-to');
-      const enFrom   = s('f-end-from'),    enTo  = s('f-end-to');
-      const drMin    = s('f-dr-min'),      drMax  = s('f-dr-max');
-      const dsoMin   = s('f-dso-min'),     dsoMax = s('f-dso-max');
-      const dieMin   = s('f-die-min'),     dieMax = s('f-die-max');
+      const s      = id => document.getElementById(id).value;
+      const subject = s('f-subject').trim().toLowerCase();
+      const app     = s('f-application').trim().toLowerCase();
+      const expSts  = checkedValues('f-exp-status');
+      const fsSts   = checkedValues('f-fs-status');
+      const stFrom  = s('f-start-from'), stTo  = s('f-start-to');
+      const enFrom  = s('f-end-from'),   enTo  = s('f-end-to');
+      const drMin   = s('f-dr-min'),     drMax  = s('f-dr-max');
+      const dsoMin  = s('f-dso-min'),    dsoMax = s('f-dso-max');
+      const dieMin  = s('f-die-min'),    dieMax = s('f-die-max');
 
       return tickets.filter(t => {
-        if (subject && !(t.subject           ?? '').toLowerCase().includes(subject)) return false;
-        if (app     && !(t.application_name  ?? '').toLowerCase().includes(app))     return false;
-        if (expSt   && t.experiment_status !== expSt)                                return false;
-        if (fsSt    && String(t.status)     !== fsSt)                                return false;
-        if (stFrom  && t.start_date_display && t.start_date_display < stFrom)        return false;
-        if (stTo    && t.start_date_display && t.start_date_display > stTo)          return false;
-        if (enFrom  && t.end_date_display   && t.end_date_display   < enFrom)        return false;
-        if (enTo    && t.end_date_display   && t.end_date_display   > enTo)          return false;
+        if (subject        && !(t.subject          ?? '').toLowerCase().includes(subject)) return false;
+        if (app            && !(t.application_name ?? '').toLowerCase().includes(app))     return false;
+        if (expSts.length  && !expSts.includes(t.experiment_status))                       return false;
+        if (fsSts.length   && !fsSts.includes(String(t.status)))                           return false;
+        if (stFrom && t.start_date_display && t.start_date_display < stFrom) return false;
+        if (stTo   && t.start_date_display && t.start_date_display > stTo)   return false;
+        if (enFrom && t.end_date_display   && t.end_date_display   < enFrom) return false;
+        if (enTo   && t.end_date_display   && t.end_date_display   > enTo)   return false;
         if (drMin  !== '' && t.days_remaining       !== null && t.days_remaining       < +drMin)  return false;
         if (drMax  !== '' && t.days_remaining       !== null && t.days_remaining       > +drMax)  return false;
         if (dsoMin !== '' && t.days_since_opened    !== null && t.days_since_opened    < +dsoMin) return false;
@@ -547,7 +554,9 @@ HTML = """<!doctype html>
     }
 
     function onFilter() {
-      const active = FILTER_IDS.filter(id => document.getElementById(id).value !== '').length;
+      const textActive = FILTER_TEXT_IDS.filter(id => document.getElementById(id).value !== '').length;
+      const cbActive   = FILTER_CB_NAMES.reduce((n, name) => n + checkedValues(name).length, 0);
+      const active     = textActive + cbActive;
       const btn = document.getElementById('filter-btn');
       btn.textContent = active ? `Filters (${active})` : 'Filters';
       btn.classList.toggle('has-filters', active > 0);
@@ -559,7 +568,10 @@ HTML = """<!doctype html>
     }
 
     function clearFilters() {
-      FILTER_IDS.forEach(id => { document.getElementById(id).value = ''; });
+      FILTER_TEXT_IDS.forEach(id => { document.getElementById(id).value = ''; });
+      FILTER_CB_NAMES.forEach(name => {
+        document.querySelectorAll(`input[name="${name}"]`).forEach(el => { el.checked = false; });
+      });
       onFilter();
     }
 
