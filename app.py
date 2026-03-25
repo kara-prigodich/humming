@@ -248,7 +248,7 @@ HTML = """<!doctype html>
   </header>
 
   <div id="controls">
-    <button id="pull-btn" onclick="loadData()">Pull Latest</button>
+    <button id="pull-btn" onclick="loadData('/api/refresh')">Pull Latest</button>
     <div id="spinner"></div>
     <span id="status"></span>
   </div>
@@ -283,7 +283,7 @@ HTML = """<!doctype html>
     let _sortCol = null;
     let _sortDir = 'asc';
 
-    async function loadData() {
+    async function loadData(endpoint) {
       const btn     = document.getElementById('pull-btn');
       const spinner = document.getElementById('spinner');
       const status  = document.getElementById('status');
@@ -296,17 +296,19 @@ HTML = """<!doctype html>
       spinner.style.display = 'block';
       status.textContent = '';
       errDiv.style.display  = 'none';
-      summary.style.display = 'none';
       empty.style.display   = 'none';
-      table.style.display   = 'none';
+      if (endpoint === '/api/refresh') {
+        table.style.display = 'none';
+        summary.style.display = 'none';
+      }
 
       try {
-        const res = await fetch('/api/data');
+        const res = await fetch(endpoint);
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           throw new Error(body.error || `Server error ${res.status}`);
         }
-        const { tickets, fetched_at } = await res.json();
+        const { tickets, fetched_at, cached } = await res.json();
         _tickets = tickets;
         _sortCol = null;
         _sortDir = 'asc';
@@ -322,7 +324,8 @@ HTML = """<!doctype html>
           empty.style.display = 'block';
         }
 
-        status.textContent = `Last refreshed: ${fetched_at}`;
+        const cacheNote = cached ? ' (cached — click Pull Latest for live data)' : '';
+        status.textContent = `Last refreshed: ${fetched_at}${cacheNote}`;
       } catch (err) {
         errDiv.textContent = err.message;
         errDiv.style.display = 'block';
@@ -393,6 +396,9 @@ HTML = """<!doctype html>
       });
     }
 
+    // Auto-load from cache on page open; Pull Latest forces a fresh fetch
+    document.addEventListener('DOMContentLoaded', () => loadData('/api/data'));
+
     function escHtml(s) {
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
                       .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -404,13 +410,18 @@ HTML = """<!doctype html>
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@app.route("/")
-def index():
-    return render_template_string(HTML)
+_cache: dict = {"tickets": None, "fetched_at": None}
 
 
-@app.route("/api/data")
-def api_data():
+def _build_response(force: bool):
+    """Return cached data, or fetch fresh if force=True or cache is empty."""
+    if not force and _cache["tickets"] is not None:
+        return jsonify(
+            tickets=_cache["tickets"],
+            fetched_at=_cache["fetched_at"],
+            count=len(_cache["tickets"]),
+            cached=True,
+        )
     try:
         tickets = fetch_tickets()
     except requests.HTTPError as exc:
@@ -419,11 +430,27 @@ def api_data():
         return jsonify(error=f"Could not reach FreshService: {exc}"), 502
 
     enriched = [calculate_fields(t) for t in tickets]
-    return jsonify(
-        tickets=enriched,
-        fetched_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-        count=len(enriched),
-    )
+    fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    _cache["tickets"]   = enriched
+    _cache["fetched_at"] = fetched_at
+    return jsonify(tickets=enriched, fetched_at=fetched_at, count=len(enriched), cached=False)
+
+
+@app.route("/")
+def index():
+    return render_template_string(HTML)
+
+
+@app.route("/api/data")
+def api_data():
+    """Return cached ticket data (instant). Used for auto-load on page open."""
+    return _build_response(force=False)
+
+
+@app.route("/api/refresh")
+def api_refresh():
+    """Force a fresh fetch from FreshService and update the cache."""
+    return _build_response(force=True)
 
 
 @app.route("/api/debug")
