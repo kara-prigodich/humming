@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timezone
 from flask import Flask, jsonify, render_template_string
 from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 load_dotenv()
 
@@ -22,6 +24,9 @@ FIELD_END_DATE   = os.getenv("FS_FIELD_END_DATE",   "experiment_end_date")
 # Ticket filters — only these tickets are shown in the dashboard.
 TICKET_TYPE           = os.getenv("FS_TICKET_TYPE",    "Service Request")
 TICKET_SUBJECT_FILTER = os.getenv("FS_SUBJECT_FILTER", "Request SaaS Application for Experimentation")
+
+# Daily auto-refresh time (24-hour HH:MM, server local time). Default: 08:00.
+REFRESH_TIME = os.getenv("REFRESH_TIME", "08:00")
 # ────────────────────────────────────────────────────────────────────────────
 
 _MISSING = [v for v in ("FRESHSERVICE_API_KEY", "FRESHSERVICE_DOMAIN") if not os.getenv(v)]
@@ -413,6 +418,19 @@ HTML = """<!doctype html>
 _cache: dict = {"tickets": None, "fetched_at": None}
 
 
+def _refresh_cache():
+    """Fetch fresh data from FreshService and update the in-memory cache."""
+    try:
+        tickets = fetch_tickets()
+    except requests.RequestException as exc:
+        print(f"[scheduler] Cache refresh failed: {exc}")
+        return
+    enriched = [calculate_fields(t) for t in tickets]
+    _cache["tickets"]    = enriched
+    _cache["fetched_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    print(f"[scheduler] Cache refreshed — {len(enriched)} tickets at {_cache['fetched_at']}")
+
+
 def _build_response(force: bool):
     """Return cached data, or fetch fresh if force=True or cache is empty."""
     if not force and _cache["tickets"] is not None:
@@ -431,9 +449,17 @@ def _build_response(force: bool):
 
     enriched = [calculate_fields(t) for t in tickets]
     fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    _cache["tickets"]   = enriched
+    _cache["tickets"]    = enriched
     _cache["fetched_at"] = fetched_at
     return jsonify(tickets=enriched, fetched_at=fetched_at, count=len(enriched), cached=False)
+
+
+# ── Scheduler ────────────────────────────────────────────────────────────────
+_hour, _minute = (int(x) for x in REFRESH_TIME.split(":"))
+_scheduler = BackgroundScheduler()
+_scheduler.add_job(_refresh_cache, CronTrigger(hour=_hour, minute=_minute))
+_scheduler.start()
+print(f"[scheduler] Daily cache refresh scheduled at {REFRESH_TIME} (server local time)")
 
 
 @app.route("/")
