@@ -40,6 +40,7 @@ _APP_NAME_OVERRIDES = {
     "Brittany Frazier":          "Claude",
     "Tami Burge":                "1st Dragon",
     "Charlie Bauer":             "NotebookLM",
+    "Katie Dasso":               "Gamma",
 }
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -162,9 +163,11 @@ def calculate_fields(ticket):
     ticket["application_name"] = app_name
 
     # Experiment status
-    # Resolved = 4, Closed = 5
+    # On Hold = 3, Resolved = 4, Closed = 5  (adjust if FS uses different codes)
     if fs_status in (4, 5):
         ticket["experiment_status"] = "Denied"
+    elif fs_status == 3:
+        ticket["experiment_status"] = "On Hold"
     elif exp_start and exp_start > today:
         ticket["experiment_status"] = "Approved"
     elif exp_start and exp_end and exp_start <= today <= exp_end:
@@ -261,6 +264,7 @@ HTML = """<!doctype html>
     /* experiment status colors */
     .status-approved    { background: #dcfce7; color: #15803d; }
     .status-inprogress  { background: #dbeafe; color: #1d4ed8; }
+    .status-onhold      { background: #fef3c7; color: #92400e; }
     .status-denied      { background: #fee2e2; color: #991b1b; }
 
     #empty-msg { display: none; padding: 2rem; color: #888; text-align: center; }
@@ -307,7 +311,7 @@ HTML = """<!doctype html>
   </div>
 
   <script>
-    const FS_STATUS = {2:'Open', 3:'Pending', 4:'Resolved', 5:'Closed'};
+    const FS_STATUS = {2:'Open', 3:'On Hold', 4:'Resolved', 5:'Closed'};
 
     let _tickets = [];
     let _sortCol = null;
@@ -405,6 +409,7 @@ HTML = """<!doctype html>
         const es = t.experiment_status;
         const esCls = es === 'Approved'    ? 'status-approved'
                     : es === 'In Progress' ? 'status-inprogress'
+                    : es === 'On Hold'     ? 'status-onhold'
                     : es === 'Denied'      ? 'status-denied'
                     : '';
         const esCell = es ? `<span class="badge ${esCls}">${es}</span>` : '—';
