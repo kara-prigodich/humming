@@ -151,7 +151,9 @@ def calculate_fields(ticket):
     # Expose formatted date strings for display columns
     ticket["start_date_display"] = str(exp_start) if exp_start else None
     ticket["end_date_display"]   = str(exp_end)   if exp_end   else None
-    app_name = custom.get("application_name") or None
+    _BLANK = {"", "unknown", "n/a"}
+    raw      = (custom.get("application_name") or "").strip().lower()
+    app_name = custom.get("application_name") if raw not in _BLANK else None
     if not app_name:
         # Subject format: "Request for <Name> : Request SaaS Application..."
         subject = ticket.get("subject", "")
