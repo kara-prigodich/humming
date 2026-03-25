@@ -209,9 +209,420 @@ HTML = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SaaS Experiment Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, sans-serif; background: #f4f6f9; color: #1a1a2e; }
+
+    header {
+      background: #fff; border-bottom: 1px solid #e2e6ef;
+      padding: .75rem 2rem; display: flex; align-items: center; gap: 1.25rem;
+    }
+    header img { height: 48px; width: auto; }
+    header .divider { width: 1px; height: 36px; background: #e2e6ef; }
+    header .title h1 { font-size: 1.1rem; font-weight: 600; color: #1a1a2e; }
+    header .title p  { font-size: .78rem; color: #888; margin-top: .1rem; }
+
+    #controls {
+      padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem;
+      border-bottom: 1px solid #e2e6ef; background: #f4f6f9;
+    }
+    button {
+      background: #4f6bed; color: #fff; border: none; border-radius: 6px;
+      padding: .5rem 1.2rem; font-size: .875rem; cursor: pointer;
+      transition: background .15s;
+    }
+    button:hover    { background: #3a55d4; }
+    button:disabled { background: #9aa5c4; cursor: default; }
+
+    #spinner {
+      display: none; width: 16px; height: 16px; border: 2px solid #c7cfe8;
+      border-top-color: #4f6bed; border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #status { font-size: .82rem; color: #666; margin-left: auto; }
+
+    #error-msg {
+      display: none; margin: 1rem 2rem; padding: .75rem 1rem;
+      background: #fee2e2; border: 1px solid #fca5a5; border-radius: 6px;
+      color: #991b1b; font-size: .875rem;
+    }
+    #summary {
+      display: none; padding: .6rem 2rem; font-size: .82rem; color: #555;
+      background: #eef1f8; border-bottom: 1px solid #e2e6ef;
+    }
+
+    /* ── Tabs ── */
+    #tab-nav {
+      display: flex; gap: 0; border-bottom: 1px solid #e2e6ef;
+      background: #fff; padding: 0 2rem;
+    }
+    .tab-btn {
+      background: none; color: #555; border: none; border-bottom: 3px solid transparent;
+      border-radius: 0; padding: .75rem 1.25rem; font-size: .875rem;
+      font-weight: 500; cursor: pointer; transition: color .15s, border-color .15s;
+      margin-bottom: -1px;
+    }
+    .tab-btn:hover { color: #1a1a2e; background: none; }
+    .tab-btn.active { color: #4f6bed; border-bottom-color: #4f6bed; }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Table ── */
+    .table-wrap { overflow-x: auto; padding: 1.5rem 2rem 2rem; }
+    table {
+      width: 100%; border-collapse: collapse; background: #fff;
+      border-radius: 8px; overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08); font-size: .875rem;
+    }
+    th {
+      background: #1a1a2e; color: #fff; text-align: left;
+      padding: .65rem 1rem; font-weight: 500; white-space: nowrap;
+      cursor: pointer; user-select: none;
+    }
+    th:hover { background: #2c2c4a; }
+    th .sort-icon { margin-left: .3rem; opacity: .5; font-size: .7rem; }
+    th.asc  .sort-icon::after { content: "▲"; opacity: 1; }
+    th.desc .sort-icon::after { content: "▼"; opacity: 1; }
+    th:not(.asc):not(.desc) .sort-icon::after { content: "⇅"; }
+    td { padding: .6rem 1rem; border-bottom: 1px solid #e8ecf2; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f0f3fa; }
+
+    .badge {
+      display: inline-block; padding: .2rem .6rem; border-radius: 4px;
+      font-weight: 600; font-size: .78rem; white-space: nowrap;
+    }
+    .green  { background: #dcfce7; color: #15803d; }
+    .yellow { background: #fef9c3; color: #854d0e; }
+    .red    { background: #fee2e2; color: #991b1b; }
+    .status-approved      { background: #dcfce7; color: #15803d; }
+    .status-inprogress    { background: #dbeafe; color: #1d4ed8; }
+    .status-onhold        { background: #fef3c7; color: #92400e; }
+    .status-denied        { background: #fee2e2; color: #991b1b; }
+    .status-invaliddates  { background: #f3f4f6; color: #6b7280; }
+
+    #empty-msg { display: none; padding: 2rem; color: #888; text-align: center; }
+
+    /* ── Gantt ── */
+    #gantt-wrap { padding: 1.5rem 2rem 2rem; }
+    #gantt-wrap .gantt-legend {
+      display: flex; gap: 1.25rem; margin-bottom: 1rem; flex-wrap: wrap;
+      font-size: .8rem;
+    }
+    .legend-item { display: flex; align-items: center; gap: .4rem; }
+    .legend-swatch { width: 14px; height: 14px; border-radius: 3px; }
+    #gantt-empty { display: none; padding: 2rem; color: #888; text-align: center; }
+    #gantt-container { background: #fff; border-radius: 8px; padding: 1.25rem;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="/static/logo.png" alt="Hummingbird Healthcare">
+    <div class="divider"></div>
+    <div class="title">
+      <h1>SaaS Experiment Tracker</h1>
+      <p>FreshService &bull; Service Requests</p>
+    </div>
+  </header>
+
+  <div id="controls">
+    <button id="pull-btn" onclick="loadData('/api/refresh')">Pull Latest</button>
+    <div id="spinner"></div>
+    <span id="status"></span>
+  </div>
+
+  <div id="summary"></div>
+  <div id="error-msg"></div>
+
+  <div id="tab-nav">
+    <button class="tab-btn active" onclick="switchTab('table', this)">Table</button>
+    <button class="tab-btn"        onclick="switchTab('gantt',  this)">Gantt</button>
+  </div>
+
+  <!-- Table tab -->
+  <div id="panel-table" class="tab-panel active">
+    <div class="table-wrap">
+      <p id="empty-msg">No matching tickets found.</p>
+      <table id="ticket-table" style="display:none">
+        <thead>
+          <tr>
+            <th onclick="sortBy('id')"                   data-col="id">                   ID                    <span class="sort-icon"></span></th>
+            <th onclick="sortBy('subject')"               data-col="subject">              Subject               <span class="sort-icon"></span></th>
+            <th onclick="sortBy('application_name')"      data-col="application_name">     Application           <span class="sort-icon"></span></th>
+            <th onclick="sortBy('experiment_status')"     data-col="experiment_status">    Experiment Status     <span class="sort-icon"></span></th>
+            <th onclick="sortBy('start_date_display')"    data-col="start_date_display">   Start Date            <span class="sort-icon"></span></th>
+            <th onclick="sortBy('end_date_display')"      data-col="end_date_display">     End Date              <span class="sort-icon"></span></th>
+            <th onclick="sortBy('days_remaining')"        data-col="days_remaining">       Days Remaining        <span class="sort-icon"></span></th>
+            <th onclick="sortBy('days_since_opened')"     data-col="days_since_opened">    Days Since Opened     <span class="sort-icon"></span></th>
+            <th onclick="sortBy('days_into_experiment')"  data-col="days_into_experiment"> Days Into Experiment  <span class="sort-icon"></span></th>
+            <th onclick="sortBy('status')"                data-col="status">               FS Status             <span class="sort-icon"></span></th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Gantt tab -->
+  <div id="panel-gantt" class="tab-panel">
+    <div id="gantt-wrap">
+      <div class="gantt-legend">
+        <div class="legend-item"><div class="legend-swatch" style="background:#1d4ed8"></div> In Progress</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#15803d"></div> Approved</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#92400e"></div> On Hold</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#6b7280"></div> Invalid Dates</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#ef4444; opacity:.7"></div>
+          <span style="border-top:2px dashed #ef4444; width:18px; display:inline-block; vertical-align:middle; margin-right:.3rem"></span>Today</div>
+      </div>
+      <p id="gantt-empty">No experiments with valid dates to display.</p>
+      <div id="gantt-container"><canvas id="gantt-chart"></canvas></div>
+    </div>
+  </div>
+
+  <script>
+    const FS_STATUS = {2:'Open', 4:'Resolved', 5:'Closed', 9:'On Hold', 16:'Approved'};
+    const STATUS_COLORS = {
+      'In Progress':   '#1d4ed8',
+      'Approved':      '#15803d',
+      'On Hold':       '#b45309',
+      'Invalid Dates': '#6b7280',
+    };
+
+    let _tickets   = [];
+    let _sortCol   = null;
+    let _sortDir   = 'asc';
+    let _ganttChart = null;
+    let _activeTab  = 'table';
+
+    // ── Tab switching ────────────────────────────────────────────────────────
+    function switchTab(name, btn) {
+      _activeTab = name;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(`panel-${name}`).classList.add('active');
+      if (name === 'gantt') renderGantt();
+    }
+
+    // ── Data loading ─────────────────────────────────────────────────────────
+    async function loadData(endpoint) {
+      const btn     = document.getElementById('pull-btn');
+      const spinner = document.getElementById('spinner');
+      const status  = document.getElementById('status');
+      const errDiv  = document.getElementById('error-msg');
+      const summary = document.getElementById('summary');
+      const empty   = document.getElementById('empty-msg');
+      const table   = document.getElementById('ticket-table');
+
+      btn.disabled = true;
+      spinner.style.display = 'block';
+      status.textContent = '';
+      errDiv.style.display  = 'none';
+      empty.style.display   = 'none';
+      if (endpoint === '/api/refresh') {
+        table.style.display   = 'none';
+        summary.style.display = 'none';
+      }
+
+      try {
+        const res = await fetch(endpoint);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Server error ${res.status}`);
+        }
+        const { tickets, fetched_at, cached } = await res.json();
+        _tickets = tickets;
+        _sortCol = null;
+        _sortDir = 'asc';
+        renderTable();
+        if (_activeTab === 'gantt') renderGantt();
+
+        if (tickets.length) {
+          const overdue = tickets.filter(t => t.days_remaining !== null && t.days_remaining < 0).length;
+          const overdueText = overdue ? ` &bull; <span style="color:#991b1b;font-weight:600">${overdue} overdue</span>` : '';
+          summary.innerHTML = `${tickets.length} ticket${tickets.length !== 1 ? 's' : ''} loaded${overdueText}`;
+          summary.style.display = 'block';
+          table.style.display = '';
+        } else {
+          empty.style.display = 'block';
+        }
+
+        const cacheNote = cached ? ' (cached — click Pull Latest for live data)' : '';
+        status.textContent = `Last refreshed: ${fetched_at}${cacheNote}`;
+      } catch (err) {
+        errDiv.textContent = err.message;
+        errDiv.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        spinner.style.display = 'none';
+      }
+    }
+
+    // ── Table rendering ──────────────────────────────────────────────────────
+    function sortBy(col) {
+      _sortDir = (_sortCol === col && _sortDir === 'asc') ? 'desc' : 'asc';
+      _sortCol = col;
+      renderTable();
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('table-body');
+      const rows  = [..._tickets];
+      if (_sortCol) {
+        rows.sort((a, b) => {
+          let av = a[_sortCol] ?? '', bv = b[_sortCol] ?? '';
+          if (typeof av === 'string') av = av.toLowerCase();
+          if (typeof bv === 'string') bv = bv.toLowerCase();
+          if (av < bv) return _sortDir === 'asc' ? -1 :  1;
+          if (av > bv) return _sortDir === 'asc' ?  1 : -1;
+          return 0;
+        });
+      }
+      document.querySelectorAll('th[data-col]').forEach(th => {
+        th.classList.remove('asc', 'desc');
+        if (th.dataset.col === _sortCol) th.classList.add(_sortDir);
+      });
+      tbody.innerHTML = '';
+      rows.forEach(t => {
+        const dr  = t.days_remaining;
+        const drCls  = dr === null || dr === undefined ? '' : dr > 30 ? 'green' : dr >= 0 ? 'yellow' : 'red';
+        const drCell = dr === null || dr === undefined ? '—' : `<span class="badge ${drCls}">${dr}</span>`;
+        const es = t.experiment_status;
+        const esCls = es === 'Approved'       ? 'status-approved'
+                    : es === 'In Progress'    ? 'status-inprogress'
+                    : es === 'On Hold'        ? 'status-onhold'
+                    : es === 'Denied'         ? 'status-denied'
+                    : es === 'Invalid Dates'  ? 'status-invaliddates'
+                    : '';
+        const esCell  = es ? `<span class="badge ${esCls}">${es}</span>` : '—';
+        const fsLabel = FS_STATUS[t.status] ?? `Status ${t.status ?? '—'}`;
+        tbody.insertAdjacentHTML('beforeend', `<tr>
+          <td>${t.id ?? '—'}</td>
+          <td>${escHtml(t.subject ?? '')}</td>
+          <td>${escHtml(t.application_name ?? '—')}</td>
+          <td>${esCell}</td>
+          <td>${t.start_date_display ?? '—'}</td>
+          <td>${t.end_date_display ?? '—'}</td>
+          <td>${drCell}</td>
+          <td>${t.days_since_opened ?? '—'}</td>
+          <td>${t.days_into_experiment ?? '—'}</td>
+          <td>${escHtml(fsLabel)}</td>
+        </tr>`);
+      });
+    }
+
+    // ── Gantt rendering ──────────────────────────────────────────────────────
+    function renderGantt() {
+      const ganttEmpty = document.getElementById('gantt-empty');
+      const ganttContainer = document.getElementById('gantt-container');
+
+      const rows = _tickets
+        .filter(t => t.experiment_status !== 'Denied' && t.start_date_display && t.end_date_display)
+        .sort((a, b) => a.start_date_display.localeCompare(b.start_date_display));
+
+      if (!rows.length) {
+        ganttEmpty.style.display = 'block';
+        ganttContainer.style.display = 'none';
+        return;
+      }
+      ganttEmpty.style.display = 'none';
+      ganttContainer.style.display = 'block';
+
+      const labels = rows.map(t => t.application_name || t.subject.split('Request for ')[1]?.split(' :')[0]?.trim() || t.subject);
+      const data   = rows.map(t => [new Date(t.start_date_display).getTime(), new Date(t.end_date_display).getTime()]);
+      const colors = rows.map(t => STATUS_COLORS[t.experiment_status] || '#9ca3af');
+
+      // Size canvas to fit all rows comfortably
+      const rowH = 44;
+      const canvas = document.getElementById('gantt-chart');
+      canvas.height = rows.length * rowH + 60;
+
+      if (_ganttChart) { _ganttChart.destroy(); _ganttChart = null; }
+
+      const todayLine = {
+        id: 'today-line',
+        afterDraw(chart) {
+          const x = chart.scales.x.getPixelForValue(Date.now());
+          const { top, bottom } = chart.chartArea;
+          const ctx = chart.ctx;
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(x, top);
+          ctx.lineTo(x, bottom);
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 4]);
+          ctx.stroke();
+          ctx.restore();
+        }
+      };
+
+      _ganttChart = new Chart(canvas, {
+        type: 'bar',
+        plugins: [todayLine],
+        data: {
+          labels,
+          datasets: [{
+            data,
+            backgroundColor: colors.map(c => c + 'bb'),
+            borderColor: colors,
+            borderWidth: 1,
+            borderRadius: 4,
+            borderSkipped: false,
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: false,
+          animation: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: (items) => labels[items[0].dataIndex],
+                label: (item) => {
+                  const t = rows[item.dataIndex];
+                  const dr = t.days_remaining;
+                  const drText = dr === null ? '' : dr >= 0 ? ` · ${dr} days remaining` : ` · ${Math.abs(dr)} days overdue`;
+                  return ` ${t.start_date_display} → ${t.end_date_display}${drText}`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              type: 'time',
+              time: { unit: 'month', displayFormats: { month: 'MMM yy' } },
+              min: Math.min(...data.map(d => d[0])),
+              max: Math.max(...data.map(d => d[1])),
+              grid: { color: '#e8ecf2' },
+              ticks: { font: { size: 12 } }
+            },
+            y: {
+              ticks: { font: { size: 13 } },
+              grid: { display: false }
+            }
+          }
+        }
+      });
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => loadData('/api/data'));
+
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+  </script>
+</body>
+</html>
+"""
 
     header {
       background: #fff; border-bottom: 1px solid #e2e6ef;
