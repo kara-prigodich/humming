@@ -136,6 +136,7 @@ def calculate_fields(ticket):
     # Expose formatted date strings for display columns
     ticket["start_date_display"] = str(exp_start) if exp_start else None
     ticket["end_date_display"]   = str(exp_end)   if exp_end   else None
+    ticket["application_name"]   = custom.get("application_name") or None
 
     # Experiment status
     # Resolved = 4, Closed = 5
@@ -268,6 +269,7 @@ HTML = """<!doctype html>
         <tr>
           <th onclick="sortBy('id')"                   data-col="id">                   ID                    <span class="sort-icon"></span></th>
           <th onclick="sortBy('subject')"               data-col="subject">              Subject               <span class="sort-icon"></span></th>
+          <th onclick="sortBy('application_name')"      data-col="application_name">     Application           <span class="sort-icon"></span></th>
           <th onclick="sortBy('experiment_status')"     data-col="experiment_status">    Experiment Status     <span class="sort-icon"></span></th>
           <th onclick="sortBy('start_date_display')"    data-col="start_date_display">   Start Date            <span class="sort-icon"></span></th>
           <th onclick="sortBy('end_date_display')"      data-col="end_date_display">     End Date              <span class="sort-icon"></span></th>
@@ -390,6 +392,7 @@ HTML = """<!doctype html>
         tbody.insertAdjacentHTML('beforeend', `<tr>
           <td>${t.id ?? '—'}</td>
           <td>${escHtml(t.subject ?? '')}</td>
+          <td>${escHtml(t.application_name ?? '—')}</td>
           <td>${esCell}</td>
           <td>${t.start_date_display ?? '—'}</td>
           <td>${t.end_date_display ?? '—'}</td>
