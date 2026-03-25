@@ -307,6 +307,31 @@ HTML = """<!doctype html>
 
     #empty-msg { display: none; padding: 2rem; color: #888; text-align: center; }
 
+    /* ── Filters ── */
+    #filter-panel {
+      display: none; padding: 1rem 2rem 1.25rem; background: #fff;
+      border-bottom: 1px solid #e2e6ef;
+    }
+    .filter-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
+      gap: .6rem 1rem;
+    }
+    .filter-group { display: flex; flex-direction: column; gap: .2rem; }
+    .filter-group label {
+      font-size: .7rem; font-weight: 700; color: #777;
+      text-transform: uppercase; letter-spacing: .05em;
+    }
+    .filter-group input, .filter-group select {
+      padding: .32rem .6rem; border: 1px solid #d1d5db; border-radius: 5px;
+      font-size: .85rem; background: #fff; color: #1a1a2e;
+    }
+    .filter-group input:focus, .filter-group select:focus {
+      outline: none; border-color: #4f6bed; box-shadow: 0 0 0 2px #4f6bed22;
+    }
+    .filter-actions { margin-top: .75rem; display: flex; align-items: center; gap: .75rem; }
+    .filter-count   { font-size: .8rem; color: #555; }
+    #filter-btn.has-filters { background: #1d4ed8; }
+
     /* ── Gantt ── */
     #gantt-wrap { padding: 1.5rem 2rem 2rem; }
     #gantt-wrap .gantt-legend {
@@ -332,8 +357,88 @@ HTML = """<!doctype html>
 
   <div id="controls">
     <button id="pull-btn" onclick="loadData('/api/refresh')">Pull Latest</button>
+    <button id="filter-btn" onclick="toggleFilters()">Filters</button>
     <div id="spinner"></div>
     <span id="status"></span>
+  </div>
+
+  <div id="filter-panel">
+    <div class="filter-grid">
+      <div class="filter-group">
+        <label>Subject</label>
+        <input type="text" id="f-subject" placeholder="contains…" oninput="onFilter()">
+      </div>
+      <div class="filter-group">
+        <label>Application</label>
+        <input type="text" id="f-application" placeholder="contains…" oninput="onFilter()">
+      </div>
+      <div class="filter-group">
+        <label>Experiment Status</label>
+        <select id="f-exp-status" onchange="onFilter()">
+          <option value="">All</option>
+          <option>Approved</option>
+          <option>In Progress</option>
+          <option>On Hold</option>
+          <option>Denied</option>
+          <option>Invalid Dates</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>FS Status</label>
+        <select id="f-fs-status" onchange="onFilter()">
+          <option value="">All</option>
+          <option value="16">Approved</option>
+          <option value="2">Open</option>
+          <option value="9">On Hold</option>
+          <option value="4">Resolved</option>
+          <option value="5">Closed</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Start Date from</label>
+        <input type="date" id="f-start-from" onchange="onFilter()">
+      </div>
+      <div class="filter-group">
+        <label>Start Date to</label>
+        <input type="date" id="f-start-to" onchange="onFilter()">
+      </div>
+      <div class="filter-group">
+        <label>End Date from</label>
+        <input type="date" id="f-end-from" onchange="onFilter()">
+      </div>
+      <div class="filter-group">
+        <label>End Date to</label>
+        <input type="date" id="f-end-to" onchange="onFilter()">
+      </div>
+      <div class="filter-group">
+        <label>Days Remaining &ge; </label>
+        <input type="number" id="f-dr-min" placeholder="min" oninput="onFilter()">
+      </div>
+      <div class="filter-group">
+        <label>Days Remaining &le;</label>
+        <input type="number" id="f-dr-max" placeholder="max" oninput="onFilter()">
+      </div>
+      <div class="filter-group">
+        <label>Days Since Opened &ge;</label>
+        <input type="number" id="f-dso-min" placeholder="min" oninput="onFilter()">
+      </div>
+      <div class="filter-group">
+        <label>Days Since Opened &le;</label>
+        <input type="number" id="f-dso-max" placeholder="max" oninput="onFilter()">
+      </div>
+      <div class="filter-group">
+        <label>Days Into Experiment &ge;</label>
+        <input type="number" id="f-die-min" placeholder="min" oninput="onFilter()">
+      </div>
+      <div class="filter-group">
+        <label>Days Into Experiment &le;</label>
+        <input type="number" id="f-die-max" placeholder="max" oninput="onFilter()">
+      </div>
+    </div>
+    <div class="filter-actions">
+      <button onclick="clearFilters()" style="background:#6b7280;padding:.32rem .9rem;font-size:.8rem">Clear All</button>
+      <span class="filter-count" id="filter-count"></span>
+    </div>
   </div>
 
   <div id="summary"></div>
@@ -393,11 +498,70 @@ HTML = """<!doctype html>
       'Invalid Dates': '#6b7280',
     };
 
-    let _tickets   = [];
-    let _sortCol   = null;
-    let _sortDir   = 'asc';
+    let _tickets    = [];
+    let _sortCol    = null;
+    let _sortDir    = 'asc';
     let _ganttChart = null;
     let _activeTab  = 'table';
+    let _filterOpen = false;
+
+    // ── Filters ──────────────────────────────────────────────────────────────
+    const FILTER_IDS = ['f-subject','f-application','f-exp-status','f-fs-status',
+      'f-start-from','f-start-to','f-end-from','f-end-to',
+      'f-dr-min','f-dr-max','f-dso-min','f-dso-max','f-die-min','f-die-max'];
+
+    function toggleFilters() {
+      _filterOpen = !_filterOpen;
+      document.getElementById('filter-panel').style.display = _filterOpen ? 'block' : 'none';
+    }
+
+    function applyFilters(tickets) {
+      const s  = v => document.getElementById(v).value;
+      const subject  = s('f-subject').trim().toLowerCase();
+      const app      = s('f-application').trim().toLowerCase();
+      const expSt    = s('f-exp-status');
+      const fsSt     = s('f-fs-status');
+      const stFrom   = s('f-start-from'),  stTo  = s('f-start-to');
+      const enFrom   = s('f-end-from'),    enTo  = s('f-end-to');
+      const drMin    = s('f-dr-min'),      drMax  = s('f-dr-max');
+      const dsoMin   = s('f-dso-min'),     dsoMax = s('f-dso-max');
+      const dieMin   = s('f-die-min'),     dieMax = s('f-die-max');
+
+      return tickets.filter(t => {
+        if (subject && !(t.subject           ?? '').toLowerCase().includes(subject)) return false;
+        if (app     && !(t.application_name  ?? '').toLowerCase().includes(app))     return false;
+        if (expSt   && t.experiment_status !== expSt)                                return false;
+        if (fsSt    && String(t.status)     !== fsSt)                                return false;
+        if (stFrom  && t.start_date_display && t.start_date_display < stFrom)        return false;
+        if (stTo    && t.start_date_display && t.start_date_display > stTo)          return false;
+        if (enFrom  && t.end_date_display   && t.end_date_display   < enFrom)        return false;
+        if (enTo    && t.end_date_display   && t.end_date_display   > enTo)          return false;
+        if (drMin  !== '' && t.days_remaining       !== null && t.days_remaining       < +drMin)  return false;
+        if (drMax  !== '' && t.days_remaining       !== null && t.days_remaining       > +drMax)  return false;
+        if (dsoMin !== '' && t.days_since_opened    !== null && t.days_since_opened    < +dsoMin) return false;
+        if (dsoMax !== '' && t.days_since_opened    !== null && t.days_since_opened    > +dsoMax) return false;
+        if (dieMin !== '' && t.days_into_experiment !== null && t.days_into_experiment < +dieMin) return false;
+        if (dieMax !== '' && t.days_into_experiment !== null && t.days_into_experiment > +dieMax) return false;
+        return true;
+      });
+    }
+
+    function onFilter() {
+      const active = FILTER_IDS.filter(id => document.getElementById(id).value !== '').length;
+      const btn = document.getElementById('filter-btn');
+      btn.textContent = active ? `Filters (${active})` : 'Filters';
+      btn.classList.toggle('has-filters', active > 0);
+      const filtered = applyFilters(_tickets);
+      document.getElementById('filter-count').textContent =
+        active ? `${filtered.length} of ${_tickets.length} shown` : '';
+      renderTable();
+      if (_activeTab === 'gantt') renderGantt();
+    }
+
+    function clearFilters() {
+      FILTER_IDS.forEach(id => { document.getElementById(id).value = ''; });
+      onFilter();
+    }
 
     // ── Tab switching ────────────────────────────────────────────────────────
     function switchTab(name, btn) {
@@ -472,7 +636,9 @@ HTML = """<!doctype html>
 
     function renderTable() {
       const tbody = document.getElementById('table-body');
-      const rows  = [..._tickets];
+      const rows  = applyFilters(_tickets);
+      document.getElementById('empty-msg').style.display = rows.length ? 'none' : 'block';
+      document.getElementById('empty-msg').textContent   = _tickets.length ? 'No tickets match the current filters.' : 'No matching tickets found.';
       if (_sortCol) {
         rows.sort((a, b) => {
           let av = a[_sortCol] ?? '', bv = b[_sortCol] ?? '';
@@ -521,7 +687,7 @@ HTML = """<!doctype html>
       const ganttEmpty = document.getElementById('gantt-empty');
       const ganttContainer = document.getElementById('gantt-container');
 
-      const rows = _tickets
+      const rows = applyFilters(_tickets)
         .filter(t => t.experiment_status !== 'Denied' && t.start_date_display && t.end_date_display)
         .sort((a, b) => a.start_date_display.localeCompare(b.start_date_display));
 
