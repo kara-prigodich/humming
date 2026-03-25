@@ -37,7 +37,7 @@ _APP_NAME_OVERRIDES = {
     "Katie Freeman":             "Uplimit",
     "Adrienne Moore - Cornwell": "Uncertain",
     "Aaron Bohler":              "Not real",
-    "Brittany Frazier":          "Claude",
+    "Brittney Frazier":          "Claude",
     "Tami Burge":                "1st Dragon",
     "Charlie Bauer":             "NotebookLM",
     "Katie Dasso":               "Gamma",
@@ -170,8 +170,10 @@ def calculate_fields(ticket):
         ticket["experiment_status"] = "Denied"
     elif fs_status == 9:
         ticket["experiment_status"] = "On Hold"
-    elif fs_status == 16 and exp_start and exp_start > today:
+    elif fs_status == 16:
         ticket["experiment_status"] = "Approved"
+    elif exp_start and exp_end and exp_end < exp_start:
+        ticket["experiment_status"] = "Invalid Dates"
     elif exp_start and exp_end and exp_start <= today <= exp_end:
         ticket["experiment_status"] = "In Progress"
     else:
@@ -264,10 +266,11 @@ HTML = """<!doctype html>
     .yellow { background: #fef9c3; color: #854d0e; }
     .red    { background: #fee2e2; color: #991b1b; }
     /* experiment status colors */
-    .status-approved    { background: #dcfce7; color: #15803d; }
-    .status-inprogress  { background: #dbeafe; color: #1d4ed8; }
-    .status-onhold      { background: #fef3c7; color: #92400e; }
-    .status-denied      { background: #fee2e2; color: #991b1b; }
+    .status-approved      { background: #dcfce7; color: #15803d; }
+    .status-inprogress    { background: #dbeafe; color: #1d4ed8; }
+    .status-onhold        { background: #fef3c7; color: #92400e; }
+    .status-denied        { background: #fee2e2; color: #991b1b; }
+    .status-invaliddates  { background: #f3f4f6; color: #6b7280; }
 
     #empty-msg { display: none; padding: 2rem; color: #888; text-align: center; }
   </style>
@@ -409,10 +412,11 @@ HTML = """<!doctype html>
 
         // Experiment status badge
         const es = t.experiment_status;
-        const esCls = es === 'Approved'    ? 'status-approved'
-                    : es === 'In Progress' ? 'status-inprogress'
-                    : es === 'On Hold'     ? 'status-onhold'
-                    : es === 'Denied'      ? 'status-denied'
+        const esCls = es === 'Approved'       ? 'status-approved'
+                    : es === 'In Progress'  ? 'status-inprogress'
+                    : es === 'On Hold'      ? 'status-onhold'
+                    : es === 'Denied'       ? 'status-denied'
+                    : es === 'Invalid Dates'? 'status-invaliddates'
                     : '';
         const esCell = es ? `<span class="badge ${esCls}">${es}</span>` : '—';
 
