@@ -374,9 +374,15 @@ def api_data():
 
 @app.route("/api/debug")
 def api_debug():
-    """Return the raw first ticket so you can inspect custom_fields slugs."""
+    """Return a sample ticket + its requested_items so field slugs can be identified."""
     try:
         sample = fetch_one_ticket()
+        requested_items = []
+        if sample.get("id"):
+            ri_url  = f"https://{DOMAIN}.freshservice.com/api/v2/tickets/{sample['id']}/requested_items"
+            ri_resp = requests.get(ri_url, auth=_fs_auth(), timeout=15)
+            if ri_resp.ok:
+                requested_items = ri_resp.json().get("requested_items", [])
     except requests.RequestException as exc:
         return jsonify(error=str(exc)), 502
     return jsonify(
@@ -385,7 +391,8 @@ def api_debug():
             FIELD_END_DATE=FIELD_END_DATE,
         ),
         sample_ticket=sample,
-        note="This shows 1 sample ticket to identify custom_fields slugs.",
+        requested_items=requested_items,
+        note="Check requested_items[*].custom_fields for your date field slugs.",
     )
 
 
