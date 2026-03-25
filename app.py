@@ -1,79 +1,96 @@
 import os
+import sys
 import requests
 from datetime import datetime, date, timezone
 from flask import Flask, jsonify, render_template_string
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 
-# ── Config ─────────────────────────────────────────────────────────────────
+# ── Config ──────────────────────────────────────────────────────────────────
 API_KEY = os.getenv("FRESHSERVICE_API_KEY")
-DOMAIN = os.getenv("FRESHSERVICE_DOMAIN")
+DOMAIN  = os.getenv("FRESHSERVICE_DOMAIN")
 
-# Custom-field names as they appear in the FreshService API response.
-# Override with env vars if your instance uses different slugs.
+# Custom-field slugs as they appear in the FreshService API response.
+# Find yours via GET /api/debug, then override with env vars.
 FIELD_START_DATE = os.getenv("FS_FIELD_START_DATE", "start_date")
-FIELD_END_DATE = os.getenv("FS_FIELD_END_DATE", "experiment_end_date")
-# ───────────────────────────────────────────────────────────────────────────
+FIELD_END_DATE   = os.getenv("FS_FIELD_END_DATE",   "experiment_end_date")
+# ────────────────────────────────────────────────────────────────────────────
+
+_MISSING = [v for v in ("FRESHSERVICE_API_KEY", "FRESHSERVICE_DOMAIN") if not os.getenv(v)]
+if _MISSING:
+    sys.exit(f"ERROR: Missing required environment variables: {', '.join(_MISSING)}\n"
+             "Copy .env.example to .env and fill in the values.")
 
 
-def fetch_tickets():
-    """Fetch all tickets for the current month from FreshService."""
-    now = datetime.now(timezone.utc)
-    year, month = now.year, now.month
-    start = f"{year}-{month:02d}-01"
-    end = (
-        f"{year}-{month + 1:02d}-01"
-        if month < 12
-        else f"{year + 1}-01-01"
-    )
+# ── FreshService helpers ─────────────────────────────────────────────────────
 
-    url = f"https://{DOMAIN}.freshservice.com/api/v2/tickets"
-    headers = {
+def _fs_headers():
+    return {
         "Authorization": f"Basic {API_KEY}",
         "Content-Type": "application/json",
     }
-    params = {"created_at": f"[{start},{end}]"}
 
-    response = requests.get(url, headers=headers, params=params, timeout=15)
-    response.raise_for_status()
-    return response.json().get("tickets", [])
+
+def fetch_tickets():
+    """Fetch all tickets for the current month, handling FreshService pagination."""
+    now   = datetime.now(timezone.utc)
+    year, month = now.year, now.month
+    start = f"{year}-{month:02d}-01"
+    end   = f"{year}-{month + 1:02d}-01" if month < 12 else f"{year + 1}-01-01"
+
+    url    = f"https://{DOMAIN}.freshservice.com/api/v2/tickets"
+    params = {"created_at": f"[{start},{end}]", "per_page": 100, "page": 1}
+
+    all_tickets = []
+    while True:
+        resp = requests.get(url, headers=_fs_headers(), params=params, timeout=15)
+        resp.raise_for_status()
+        page_tickets = resp.json().get("tickets", [])
+        all_tickets.extend(page_tickets)
+        if len(page_tickets) < params["per_page"]:
+            break
+        params["page"] += 1
+
+    return all_tickets
+
+
+def _parse_date(value):
+    """Parse an ISO-8601 date/datetime string to a date object, or None."""
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(value[:19], fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def calculate_fields(ticket):
-    """Add the three derived date fields to a ticket dict."""
-    today = date.today()
+    """Enrich a ticket dict with three derived date fields."""
+    today  = date.today()
+    custom = ticket.get("custom_fields") or {}
 
-    def parse_date(value):
-        if not value:
-            return None
-        for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d"):
-            try:
-                dt = datetime.strptime(value[:19], fmt[:len(value[:19])])
-                return dt.date()
-            except ValueError:
-                continue
-        return None
+    created_at  = _parse_date(ticket.get("created_at", ""))
+    exp_start   = _parse_date(custom.get(FIELD_START_DATE, ""))
+    exp_end     = _parse_date(custom.get(FIELD_END_DATE,   ""))
 
-    # created_at is a top-level field; start_date / experiment_end_date live
-    # in custom_fields (adjust FIELD_* env vars if your slugs differ).
-    created_at = parse_date(ticket.get("created_at", ""))
-    custom = ticket.get("custom_fields", {})
-    exp_start = parse_date(custom.get(FIELD_START_DATE, ""))
-    exp_end = parse_date(custom.get(FIELD_END_DATE, ""))
-
-    ticket["days_since_opened"] = (today - created_at).days if created_at else None
-    ticket["days_into_experiment"] = (today - exp_start).days if exp_start else None
-    ticket["days_remaining"] = (exp_end - today).days if exp_end else None
+    ticket["days_since_opened"]    = (today - created_at).days  if created_at else None
+    ticket["days_into_experiment"] = (today - exp_start).days   if exp_start  else None
+    ticket["days_remaining"]       = (exp_end - today).days     if exp_end    else None
     return ticket
 
 
-# ── HTML template ───────────────────────────────────────────────────────────
+# ── HTML ─────────────────────────────────────────────────────────────────────
 HTML = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FreshService Tickets</title>
+  <title>FreshService Experiment Tracker</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, sans-serif; background: #f4f6f9; color: #1a1a2e; }
@@ -83,37 +100,59 @@ HTML = """<!doctype html>
       display: flex; align-items: center; justify-content: space-between;
     }
     header h1 { font-size: 1.2rem; font-weight: 600; }
+    header .subtitle { font-size: .8rem; opacity: .6; margin-top: .15rem; }
 
-    #controls { padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem; }
+    #controls {
+      padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem;
+      border-bottom: 1px solid #e2e6ef;
+    }
 
     button {
       background: #4f6bed; color: #fff; border: none; border-radius: 6px;
-      padding: .5rem 1.2rem; font-size: .9rem; cursor: pointer;
+      padding: .5rem 1.2rem; font-size: .875rem; cursor: pointer;
       transition: background .15s;
     }
-    button:hover { background: #3a55d4; }
+    button:hover    { background: #3a55d4; }
     button:disabled { background: #9aa5c4; cursor: default; }
 
-    #status { font-size: .85rem; color: #555; }
+    #spinner {
+      display: none; width: 16px; height: 16px; border: 2px solid #c7cfe8;
+      border-top-color: #4f6bed; border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #status { font-size: .82rem; color: #666; margin-left: auto; }
 
     #error-msg {
-      display: none; margin: 0 2rem; padding: .75rem 1rem;
+      display: none; margin: 1rem 2rem; padding: .75rem 1rem;
       background: #fee2e2; border: 1px solid #fca5a5; border-radius: 6px;
-      color: #991b1b; font-size: .9rem;
+      color: #991b1b; font-size: .875rem;
     }
 
-    .table-wrap { overflow-x: auto; padding: 0 2rem 2rem; }
+    #summary {
+      display: none; padding: .6rem 2rem; font-size: .82rem; color: #555;
+      background: #eef1f8; border-bottom: 1px solid #e2e6ef;
+    }
+
+    .table-wrap { overflow-x: auto; padding: 1.5rem 2rem 2rem; }
 
     table {
       width: 100%; border-collapse: collapse; background: #fff;
       border-radius: 8px; overflow: hidden;
-      box-shadow: 0 1px 4px rgba(0,0,0,.08);
-      font-size: .875rem;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08); font-size: .875rem;
     }
     th {
       background: #1a1a2e; color: #fff; text-align: left;
       padding: .65rem 1rem; font-weight: 500; white-space: nowrap;
+      cursor: pointer; user-select: none;
     }
+    th:hover { background: #2c2c4a; }
+    th .sort-icon { margin-left: .3rem; opacity: .5; font-size: .7rem; }
+    th.asc  .sort-icon::after { content: "▲"; opacity: 1; }
+    th.desc .sort-icon::after { content: "▼"; opacity: 1; }
+    th:not(.asc):not(.desc) .sort-icon::after { content: "⇅"; }
+
     td { padding: .6rem 1rem; border-bottom: 1px solid #e8ecf2; }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: #f0f3fa; }
@@ -126,33 +165,38 @@ HTML = """<!doctype html>
     .yellow { background: #fef9c3; color: #854d0e; }
     .red    { background: #fee2e2; color: #991b1b; }
 
-    #empty-msg { display: none; padding: 1.5rem 2rem; color: #666; }
+    #empty-msg { display: none; padding: 2rem; color: #888; text-align: center; }
   </style>
 </head>
 <body>
   <header>
-    <h1>FreshService Experiment Tickets</h1>
+    <div>
+      <h1>FreshService Experiment Tracker</h1>
+      <div class="subtitle">Current month &bull; All experiments</div>
+    </div>
   </header>
 
   <div id="controls">
     <button id="pull-btn" onclick="loadData()">Pull Latest</button>
+    <div id="spinner"></div>
     <span id="status"></span>
   </div>
 
+  <div id="summary"></div>
   <div id="error-msg"></div>
-  <p id="empty-msg">No tickets found for the current month.</p>
 
   <div class="table-wrap">
-    <table id="ticket-table">
+    <p id="empty-msg">No tickets found for the current month.</p>
+    <table id="ticket-table" style="display:none">
       <thead>
         <tr>
-          <th>ID</th>
-          <th>Subject</th>
-          <th>Status</th>
-          <th>Created At</th>
-          <th>Days Since Opened</th>
-          <th>Days Into Experiment</th>
-          <th>Days Remaining</th>
+          <th onclick="sortBy('id')"          data-col="id">          ID                    <span class="sort-icon"></span></th>
+          <th onclick="sortBy('subject')"      data-col="subject">     Subject               <span class="sort-icon"></span></th>
+          <th onclick="sortBy('status')"       data-col="status">      Status                <span class="sort-icon"></span></th>
+          <th onclick="sortBy('created_at')"   data-col="created_at">  Created               <span class="sort-icon"></span></th>
+          <th onclick="sortBy('days_since_opened')"    data-col="days_since_opened">    Days Since Opened    <span class="sort-icon"></span></th>
+          <th onclick="sortBy('days_into_experiment')" data-col="days_into_experiment"> Days Into Experiment <span class="sort-icon"></span></th>
+          <th onclick="sortBy('days_remaining')"       data-col="days_remaining">       Days Remaining       <span class="sort-icon"></span></th>
         </tr>
       </thead>
       <tbody id="table-body"></tbody>
@@ -160,57 +204,47 @@ HTML = """<!doctype html>
   </div>
 
   <script>
+    let _tickets = [];
+    let _sortCol = null;
+    let _sortDir = 'asc';
+
     async function loadData() {
-      const btn    = document.getElementById('pull-btn');
-      const status = document.getElementById('status');
-      const errDiv = document.getElementById('error-msg');
-      const empty  = document.getElementById('empty-msg');
-      const tbody  = document.getElementById('table-body');
+      const btn     = document.getElementById('pull-btn');
+      const spinner = document.getElementById('spinner');
+      const status  = document.getElementById('status');
+      const errDiv  = document.getElementById('error-msg');
+      const summary = document.getElementById('summary');
+      const empty   = document.getElementById('empty-msg');
+      const table   = document.getElementById('ticket-table');
 
       btn.disabled = true;
-      btn.textContent = 'Fetching…';
+      spinner.style.display = 'block';
       status.textContent = '';
-      errDiv.style.display = 'none';
-      empty.style.display  = 'none';
+      errDiv.style.display  = 'none';
+      summary.style.display = 'none';
+      empty.style.display   = 'none';
+      table.style.display   = 'none';
 
       try {
         const res = await fetch('/api/data');
-        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Server error ${res.status}`);
+        }
         const { tickets, fetched_at } = await res.json();
+        _tickets = tickets;
+        _sortCol = null;
+        _sortDir = 'asc';
+        renderTable();
 
-        tbody.innerHTML = '';
-
-        if (!tickets.length) {
-          empty.style.display = 'block';
+        if (tickets.length) {
+          const overdue  = tickets.filter(t => t.days_remaining !== null && t.days_remaining < 0).length;
+          const soonText = overdue ? ` &bull; <span style="color:#991b1b;font-weight:600">${overdue} overdue</span>` : '';
+          summary.innerHTML = `${tickets.length} ticket${tickets.length !== 1 ? 's' : ''} loaded${soonText}`;
+          summary.style.display = 'block';
+          table.style.display = '';
         } else {
-          tickets.forEach(t => {
-            const dr = t.days_remaining;
-            let cls = '';
-            if (dr === null || dr === undefined) {
-              cls = '';
-            } else if (dr > 30) {
-              cls = 'green';
-            } else if (dr >= 0) {
-              cls = 'yellow';
-            } else {
-              cls = 'red';
-            }
-
-            const drCell = dr === null || dr === undefined
-              ? '—'
-              : `<span class="badge ${cls}">${dr}</span>`;
-
-            const row = `<tr>
-              <td>${t.id ?? '—'}</td>
-              <td>${escHtml(t.subject ?? '')}</td>
-              <td>${escHtml(String(t.status ?? '—'))}</td>
-              <td>${(t.created_at ?? '—').slice(0, 10)}</td>
-              <td>${t.days_since_opened ?? '—'}</td>
-              <td>${t.days_into_experiment ?? '—'}</td>
-              <td>${drCell}</td>
-            </tr>`;
-            tbody.insertAdjacentHTML('beforeend', row);
-          });
+          empty.style.display = 'block';
         }
 
         status.textContent = `Last refreshed: ${fetched_at}`;
@@ -219,8 +253,64 @@ HTML = """<!doctype html>
         errDiv.style.display = 'block';
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Pull Latest';
+        spinner.style.display = 'none';
       }
+    }
+
+    function sortBy(col) {
+      if (_sortCol === col) {
+        _sortDir = _sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        _sortCol = col;
+        _sortDir = 'asc';
+      }
+      renderTable();
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('table-body');
+      const rows  = [..._tickets];
+
+      if (_sortCol) {
+        rows.sort((a, b) => {
+          let av = a[_sortCol] ?? '';
+          let bv = b[_sortCol] ?? '';
+          if (typeof av === 'string') av = av.toLowerCase();
+          if (typeof bv === 'string') bv = bv.toLowerCase();
+          if (av < bv) return _sortDir === 'asc' ? -1 :  1;
+          if (av > bv) return _sortDir === 'asc' ?  1 : -1;
+          return 0;
+        });
+      }
+
+      // Update sort indicators
+      document.querySelectorAll('th[data-col]').forEach(th => {
+        th.classList.remove('asc', 'desc');
+        if (th.dataset.col === _sortCol) th.classList.add(_sortDir);
+      });
+
+      tbody.innerHTML = '';
+      rows.forEach(t => {
+        const dr = t.days_remaining;
+        const cls = dr === null || dr === undefined ? ''
+                  : dr > 30  ? 'green'
+                  : dr >= 0  ? 'yellow'
+                  : 'red';
+
+        const drCell = dr === null || dr === undefined
+          ? '—'
+          : `<span class="badge ${cls}">${dr}</span>`;
+
+        tbody.insertAdjacentHTML('beforeend', `<tr>
+          <td>${t.id ?? '—'}</td>
+          <td>${escHtml(t.subject ?? '')}</td>
+          <td>${escHtml(String(t.status ?? '—'))}</td>
+          <td>${(t.created_at ?? '—').slice(0, 10)}</td>
+          <td>${t.days_since_opened  ?? '—'}</td>
+          <td>${t.days_into_experiment ?? '—'}</td>
+          <td>${drCell}</td>
+        </tr>`);
+      });
     }
 
     function escHtml(s) {
@@ -231,7 +321,7 @@ HTML = """<!doctype html>
 </body>
 </html>
 """
-# ───────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 @app.route("/")
@@ -241,11 +331,37 @@ def index():
 
 @app.route("/api/data")
 def api_data():
-    tickets = fetch_tickets()
+    try:
+        tickets = fetch_tickets()
+    except requests.HTTPError as exc:
+        return jsonify(error=f"FreshService API error: {exc.response.status_code} {exc.response.text}"), 502
+    except requests.RequestException as exc:
+        return jsonify(error=f"Could not reach FreshService: {exc}"), 502
+
     enriched = [calculate_fields(t) for t in tickets]
     return jsonify(
         tickets=enriched,
         fetched_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        count=len(enriched),
+    )
+
+
+@app.route("/api/debug")
+def api_debug():
+    """Return the raw first ticket so you can inspect custom_fields slugs."""
+    try:
+        tickets = fetch_tickets()
+    except requests.RequestException as exc:
+        return jsonify(error=str(exc)), 502
+
+    sample = tickets[0] if tickets else {}
+    return jsonify(
+        field_config=dict(
+            FIELD_START_DATE=FIELD_START_DATE,
+            FIELD_END_DATE=FIELD_END_DATE,
+        ),
+        sample_ticket=sample,
+        total_fetched=len(tickets),
     )
 
 
