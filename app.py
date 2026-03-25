@@ -42,6 +42,13 @@ _APP_NAME_OVERRIDES = {
     "Charlie Bauer":             "NotebookLM",
     "Katie Dasso":               "Gamma",
 }
+
+# Manual date overrides for tickets submitted before start/end date fields existed,
+# or where the form was submitted with placeholder/identical dates.
+# Key = requester name (same format as above). Values = (start, end) as YYYY-MM-DD.
+_DATE_OVERRIDES = {
+    "Katie Dasso": ("2026-03-11", "2026-04-22"),
+}
 # ────────────────────────────────────────────────────────────────────────────
 
 _MISSING = [v for v in ("FRESHSERVICE_API_KEY", "FRESHSERVICE_DOMAIN") if not os.getenv(v)]
@@ -143,6 +150,19 @@ def calculate_fields(ticket):
     exp_start  = _parse_date(custom.get(FIELD_START_DATE, ""))
     exp_end    = _parse_date(custom.get(FIELD_END_DATE,   ""))
     fs_status  = ticket.get("status")
+
+    # Apply date overrides when dates are missing or clearly invalid (same-day placeholder, end < start)
+    _dates_invalid = (not exp_start or not exp_end or exp_start == exp_end or exp_end < exp_start)
+    if _dates_invalid:
+        subject = ticket.get("subject", "")
+        try:
+            requester_name = subject.split("Request for ", 1)[1].split(" : ", 1)[0].strip()
+            if requester_name in _DATE_OVERRIDES:
+                s, e = _DATE_OVERRIDES[requester_name]
+                exp_start = _parse_date(s)
+                exp_end   = _parse_date(e)
+        except IndexError:
+            pass
 
     ticket["days_since_opened"]    = (today - created_at).days if created_at else None
     ticket["days_into_experiment"] = (today - exp_start).days  if exp_start  else None
