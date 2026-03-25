@@ -164,13 +164,13 @@ def calculate_fields(ticket):
             pass
     ticket["application_name"] = app_name
 
-    # Experiment status
-    # On Hold = 3, Resolved = 4, Closed = 5  (adjust if FS uses different codes)
+    # Experiment status — FS status codes confirmed for this instance:
+    # On Hold = 9, Resolved = 4, Closed = 5, Approved = 16
     if fs_status in (4, 5):
         ticket["experiment_status"] = "Denied"
-    elif fs_status == 3:
+    elif fs_status == 9:
         ticket["experiment_status"] = "On Hold"
-    elif exp_start and exp_start > today:
+    elif fs_status == 16 and exp_start and exp_start > today:
         ticket["experiment_status"] = "Approved"
     elif exp_start and exp_end and exp_start <= today <= exp_end:
         ticket["experiment_status"] = "In Progress"
@@ -313,7 +313,7 @@ HTML = """<!doctype html>
   </div>
 
   <script>
-    const FS_STATUS = {2:'Open', 3:'On Hold', 4:'Resolved', 5:'Closed'};
+    const FS_STATUS = {2:'Open', 4:'Resolved', 5:'Closed', 9:'On Hold', 16:'Approved'};
 
     let _tickets = [];
     let _sortCol = null;
