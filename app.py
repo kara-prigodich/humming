@@ -33,14 +33,9 @@ def _fs_auth():
 
 
 def fetch_tickets():
-    """Fetch all tickets for the current month, handling FreshService pagination."""
-    now   = datetime.now(timezone.utc)
-    year, month = now.year, now.month
-    start = f"{year}-{month:02d}-01"
-    end   = f"{year}-{month + 1:02d}-01" if month < 12 else f"{year + 1}-01-01"
-
+    """Fetch all open tickets, handling FreshService pagination."""
     url    = f"https://{DOMAIN}.freshservice.com/api/v2/tickets"
-    params = {"created_at": f"[{start},{end}]", "per_page": 100, "page": 1}
+    params = {"per_page": 100, "page": 1}
 
     all_tickets = []
     while True:
