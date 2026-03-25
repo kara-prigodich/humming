@@ -364,7 +364,7 @@ def api_debug():
             FIELD_END_DATE=FIELD_END_DATE,
         ),
         sample_ticket=sample,
-        total_fetched=len(tickets),
+        note="This shows 1 sample ticket to identify custom_fields slugs.",
     )
 
 
