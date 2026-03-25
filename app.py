@@ -114,17 +114,34 @@ def _parse_date(value):
 
 
 def calculate_fields(ticket):
-    """Enrich a ticket dict with three derived date fields."""
+    """Enrich a ticket dict with derived date fields and experiment status."""
     today  = date.today()
     custom = ticket.get("custom_fields") or {}
 
-    created_at  = _parse_date(ticket.get("created_at", ""))
-    exp_start   = _parse_date(custom.get(FIELD_START_DATE, ""))
-    exp_end     = _parse_date(custom.get(FIELD_END_DATE,   ""))
+    created_at = _parse_date(ticket.get("created_at", ""))
+    exp_start  = _parse_date(custom.get(FIELD_START_DATE, ""))
+    exp_end    = _parse_date(custom.get(FIELD_END_DATE,   ""))
+    fs_status  = ticket.get("status")
 
-    ticket["days_since_opened"]    = (today - created_at).days  if created_at else None
-    ticket["days_into_experiment"] = (today - exp_start).days   if exp_start  else None
-    ticket["days_remaining"]       = (exp_end - today).days     if exp_end    else None
+    ticket["days_since_opened"]    = (today - created_at).days if created_at else None
+    ticket["days_into_experiment"] = (today - exp_start).days  if exp_start  else None
+    ticket["days_remaining"]       = (exp_end - today).days    if exp_end    else None
+
+    # Expose formatted date strings for display columns
+    ticket["start_date_display"] = str(exp_start) if exp_start else None
+    ticket["end_date_display"]   = str(exp_end)   if exp_end   else None
+
+    # Experiment status
+    # Resolved = 4, Closed = 5
+    if fs_status in (4, 5):
+        ticket["experiment_status"] = "Denied"
+    elif exp_start and exp_start > today:
+        ticket["experiment_status"] = "Approved"
+    elif exp_start and exp_end and exp_start <= today <= exp_end:
+        ticket["experiment_status"] = "In Progress"
+    else:
+        ticket["experiment_status"] = None
+
     return ticket
 
 
@@ -134,21 +151,23 @@ HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FreshService Experiment Tracker</title>
+  <title>SaaS Experiment Tracker</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, sans-serif; background: #f4f6f9; color: #1a1a2e; }
 
     header {
-      background: #1a1a2e; color: #fff; padding: 1rem 2rem;
-      display: flex; align-items: center; justify-content: space-between;
+      background: #fff; border-bottom: 1px solid #e2e6ef;
+      padding: .75rem 2rem; display: flex; align-items: center; gap: 1.25rem;
     }
-    header h1 { font-size: 1.2rem; font-weight: 600; }
-    header .subtitle { font-size: .8rem; opacity: .6; margin-top: .15rem; }
+    header img { height: 48px; width: auto; }
+    header .divider { width: 1px; height: 36px; background: #e2e6ef; }
+    header .title h1 { font-size: 1.1rem; font-weight: 600; color: #1a1a2e; }
+    header .title p  { font-size: .78rem; color: #888; margin-top: .1rem; }
 
     #controls {
       padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem;
-      border-bottom: 1px solid #e2e6ef;
+      border-bottom: 1px solid #e2e6ef; background: #f4f6f9;
     }
 
     button {
@@ -202,21 +221,28 @@ HTML = """<!doctype html>
     tr:hover td { background: #f0f3fa; }
 
     .badge {
-      display: inline-block; padding: .2rem .55rem; border-radius: 4px;
-      font-weight: 600; font-size: .8rem;
+      display: inline-block; padding: .2rem .6rem; border-radius: 4px;
+      font-weight: 600; font-size: .78rem; white-space: nowrap;
     }
+    /* days_remaining colors */
     .green  { background: #dcfce7; color: #15803d; }
     .yellow { background: #fef9c3; color: #854d0e; }
     .red    { background: #fee2e2; color: #991b1b; }
+    /* experiment status colors */
+    .status-approved    { background: #dcfce7; color: #15803d; }
+    .status-inprogress  { background: #dbeafe; color: #1d4ed8; }
+    .status-denied      { background: #fee2e2; color: #991b1b; }
 
     #empty-msg { display: none; padding: 2rem; color: #888; text-align: center; }
   </style>
 </head>
 <body>
   <header>
-    <div>
-      <h1>FreshService Experiment Tracker</h1>
-      <div class="subtitle">Current month &bull; All experiments</div>
+    <img src="/static/logo.png" alt="Hummingbird Healthcare">
+    <div class="divider"></div>
+    <div class="title">
+      <h1>SaaS Experiment Tracker</h1>
+      <p>FreshService &bull; Service Requests</p>
     </div>
   </header>
 
@@ -230,17 +256,19 @@ HTML = """<!doctype html>
   <div id="error-msg"></div>
 
   <div class="table-wrap">
-    <p id="empty-msg">No tickets found for the current month.</p>
+    <p id="empty-msg">No matching tickets found.</p>
     <table id="ticket-table" style="display:none">
       <thead>
         <tr>
-          <th onclick="sortBy('id')"          data-col="id">          ID                    <span class="sort-icon"></span></th>
-          <th onclick="sortBy('subject')"      data-col="subject">     Subject               <span class="sort-icon"></span></th>
-          <th onclick="sortBy('status')"       data-col="status">      Status                <span class="sort-icon"></span></th>
-          <th onclick="sortBy('created_at')"   data-col="created_at">  Created               <span class="sort-icon"></span></th>
-          <th onclick="sortBy('days_since_opened')"    data-col="days_since_opened">    Days Since Opened    <span class="sort-icon"></span></th>
-          <th onclick="sortBy('days_into_experiment')" data-col="days_into_experiment"> Days Into Experiment <span class="sort-icon"></span></th>
-          <th onclick="sortBy('days_remaining')"       data-col="days_remaining">       Days Remaining       <span class="sort-icon"></span></th>
+          <th onclick="sortBy('id')"                   data-col="id">                   ID                    <span class="sort-icon"></span></th>
+          <th onclick="sortBy('subject')"               data-col="subject">              Subject               <span class="sort-icon"></span></th>
+          <th onclick="sortBy('experiment_status')"     data-col="experiment_status">    Experiment Status     <span class="sort-icon"></span></th>
+          <th onclick="sortBy('start_date_display')"    data-col="start_date_display">   Start Date            <span class="sort-icon"></span></th>
+          <th onclick="sortBy('end_date_display')"      data-col="end_date_display">     End Date              <span class="sort-icon"></span></th>
+          <th onclick="sortBy('days_remaining')"        data-col="days_remaining">       Days Remaining        <span class="sort-icon"></span></th>
+          <th onclick="sortBy('days_since_opened')"     data-col="days_since_opened">    Days Since Opened     <span class="sort-icon"></span></th>
+          <th onclick="sortBy('days_into_experiment')"  data-col="days_into_experiment"> Days Into Experiment  <span class="sort-icon"></span></th>
+          <th onclick="sortBy('status')"                data-col="status">               FS Status             <span class="sort-icon"></span></th>
         </tr>
       </thead>
       <tbody id="table-body"></tbody>
@@ -248,6 +276,8 @@ HTML = """<!doctype html>
   </div>
 
   <script>
+    const FS_STATUS = {2:'Open', 3:'Pending', 4:'Resolved', 5:'Closed'};
+
     let _tickets = [];
     let _sortCol = null;
     let _sortDir = 'asc';
@@ -282,9 +312,9 @@ HTML = """<!doctype html>
         renderTable();
 
         if (tickets.length) {
-          const overdue  = tickets.filter(t => t.days_remaining !== null && t.days_remaining < 0).length;
-          const soonText = overdue ? ` &bull; <span style="color:#991b1b;font-weight:600">${overdue} overdue</span>` : '';
-          summary.innerHTML = `${tickets.length} ticket${tickets.length !== 1 ? 's' : ''} loaded${soonText}`;
+          const overdue = tickets.filter(t => t.days_remaining !== null && t.days_remaining < 0).length;
+          const overdueText = overdue ? ` &bull; <span style="color:#991b1b;font-weight:600">${overdue} overdue</span>` : '';
+          summary.innerHTML = `${tickets.length} ticket${tickets.length !== 1 ? 's' : ''} loaded${overdueText}`;
           summary.style.display = 'block';
           table.style.display = '';
         } else {
@@ -302,12 +332,8 @@ HTML = """<!doctype html>
     }
 
     function sortBy(col) {
-      if (_sortCol === col) {
-        _sortDir = _sortDir === 'asc' ? 'desc' : 'asc';
-      } else {
-        _sortCol = col;
-        _sortDir = 'asc';
-      }
+      _sortDir = (_sortCol === col && _sortDir === 'asc') ? 'desc' : 'asc';
+      _sortCol = col;
       renderTable();
     }
 
@@ -327,7 +353,6 @@ HTML = """<!doctype html>
         });
       }
 
-      // Update sort indicators
       document.querySelectorAll('th[data-col]').forEach(th => {
         th.classList.remove('asc', 'desc');
         if (th.dataset.col === _sortCol) th.classList.add(_sortDir);
@@ -335,31 +360,41 @@ HTML = """<!doctype html>
 
       tbody.innerHTML = '';
       rows.forEach(t => {
-        const dr = t.days_remaining;
-        const cls = dr === null || dr === undefined ? ''
-                  : dr > 30  ? 'green'
-                  : dr >= 0  ? 'yellow'
-                  : 'red';
-
+        // Days remaining badge
+        const dr  = t.days_remaining;
+        const drCls = dr === null || dr === undefined ? ''
+                    : dr > 30 ? 'green' : dr >= 0 ? 'yellow' : 'red';
         const drCell = dr === null || dr === undefined
-          ? '—'
-          : `<span class="badge ${cls}">${dr}</span>`;
+          ? '—' : `<span class="badge ${drCls}">${dr}</span>`;
+
+        // Experiment status badge
+        const es = t.experiment_status;
+        const esCls = es === 'Approved'    ? 'status-approved'
+                    : es === 'In Progress' ? 'status-inprogress'
+                    : es === 'Denied'      ? 'status-denied'
+                    : '';
+        const esCell = es ? `<span class="badge ${esCls}">${es}</span>` : '—';
+
+        // FS status label
+        const fsLabel = FS_STATUS[t.status] ?? `Status ${t.status ?? '—'}`;
 
         tbody.insertAdjacentHTML('beforeend', `<tr>
           <td>${t.id ?? '—'}</td>
           <td>${escHtml(t.subject ?? '')}</td>
-          <td>${escHtml(String(t.status ?? '—'))}</td>
-          <td>${(t.created_at ?? '—').slice(0, 10)}</td>
-          <td>${t.days_since_opened  ?? '—'}</td>
-          <td>${t.days_into_experiment ?? '—'}</td>
+          <td>${esCell}</td>
+          <td>${t.start_date_display ?? '—'}</td>
+          <td>${t.end_date_display ?? '—'}</td>
           <td>${drCell}</td>
+          <td>${t.days_since_opened ?? '—'}</td>
+          <td>${t.days_into_experiment ?? '—'}</td>
+          <td>${escHtml(fsLabel)}</td>
         </tr>`);
       });
     }
 
     function escHtml(s) {
-      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-               .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
   </script>
 </body>
