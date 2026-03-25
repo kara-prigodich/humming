@@ -17,6 +17,10 @@ DOMAIN  = os.getenv("FRESHSERVICE_DOMAIN")
 # Find yours via GET /api/debug, then override with env vars.
 FIELD_START_DATE = os.getenv("FS_FIELD_START_DATE", "start_date")
 FIELD_END_DATE   = os.getenv("FS_FIELD_END_DATE",   "experiment_end_date")
+
+# Ticket filters — only these tickets are shown in the dashboard.
+TICKET_TYPE           = os.getenv("FS_TICKET_TYPE",    "Service Request")
+TICKET_SUBJECT_FILTER = os.getenv("FS_SUBJECT_FILTER", "Request SaaS Application for Experimentation")
 # ────────────────────────────────────────────────────────────────────────────
 
 _MISSING = [v for v in ("FRESHSERVICE_API_KEY", "FRESHSERVICE_DOMAIN") if not os.getenv(v)]
@@ -32,8 +36,15 @@ def _fs_auth():
     return (API_KEY, "X")
 
 
+def _matches_filter(ticket):
+    """Return True if a ticket matches the configured type and subject filter."""
+    type_ok    = not TICKET_TYPE           or ticket.get("type", "") == TICKET_TYPE
+    subject_ok = not TICKET_SUBJECT_FILTER or TICKET_SUBJECT_FILTER.lower() in (ticket.get("subject") or "").lower()
+    return type_ok and subject_ok
+
+
 def fetch_tickets():
-    """Fetch tickets updated since the start of the current month."""
+    """Fetch matching tickets updated since the start of the current month."""
     now   = datetime.now(timezone.utc)
     since = f"{now.year}-{now.month:02d}-01T00:00:00Z"
 
@@ -45,7 +56,7 @@ def fetch_tickets():
         resp = requests.get(url, auth=_fs_auth(), params=params, timeout=15)
         resp.raise_for_status()
         page_tickets = resp.json().get("tickets", [])
-        all_tickets.extend(page_tickets)
+        all_tickets.extend(t for t in page_tickets if _matches_filter(t))
         if len(page_tickets) < params["per_page"]:
             break
         params["page"] += 1
@@ -54,12 +65,22 @@ def fetch_tickets():
 
 
 def fetch_one_ticket():
-    """Fetch a single ticket — used only by /api/debug."""
-    url  = f"https://{DOMAIN}.freshservice.com/api/v2/tickets"
-    resp = requests.get(url, auth=_fs_auth(), params={"per_page": 1, "page": 1}, timeout=15)
-    resp.raise_for_status()
-    tickets = resp.json().get("tickets", [])
-    return tickets[0] if tickets else {}
+    """Find one matching ticket for /api/debug (searches up to 10 pages)."""
+    url    = f"https://{DOMAIN}.freshservice.com/api/v2/tickets"
+    params = {"per_page": 100, "page": 1}
+
+    for _ in range(10):
+        resp = requests.get(url, auth=_fs_auth(), params=params, timeout=15)
+        resp.raise_for_status()
+        page_tickets = resp.json().get("tickets", [])
+        for t in page_tickets:
+            if _matches_filter(t):
+                return t
+        if len(page_tickets) < params["per_page"]:
+            break
+        params["page"] += 1
+
+    return {}
 
 
 def _parse_date(value):
