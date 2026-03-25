@@ -27,6 +27,20 @@ TICKET_SUBJECT_FILTER = os.getenv("FS_SUBJECT_FILTER", "Request SaaS Application
 
 # Daily auto-refresh time (24-hour HH:MM, server local time). Default: 08:00.
 REFRESH_TIME = os.getenv("REFRESH_TIME", "08:00")
+
+# Manual application name overrides for tickets submitted before the field existed.
+# Key = requester name as it appears in the subject ("Request for <Name> : ...").
+# Remove an entry once the requester updates their ticket in FreshService.
+_APP_NAME_OVERRIDES = {
+    "Trent Joseph":              "No tool listed",
+    "Erin Gunderson":            "Yoturi",
+    "Katie Freeman":             "Uplimit",
+    "Adrienne Moore - Cornwell": "Uncertain",
+    "Aaron Bohler":              "Not real",
+    "Brittany Frazier":          "Claude",
+    "Tami Burge":                "1st Dragon",
+    "Charlie Bauer":             "NotebookLM",
+}
 # ────────────────────────────────────────────────────────────────────────────
 
 _MISSING = [v for v in ("FRESHSERVICE_API_KEY", "FRESHSERVICE_DOMAIN") if not os.getenv(v)]
@@ -136,7 +150,16 @@ def calculate_fields(ticket):
     # Expose formatted date strings for display columns
     ticket["start_date_display"] = str(exp_start) if exp_start else None
     ticket["end_date_display"]   = str(exp_end)   if exp_end   else None
-    ticket["application_name"]   = custom.get("application_name") or None
+    app_name = custom.get("application_name") or None
+    if not app_name:
+        # Subject format: "Request for <Name> : Request SaaS Application..."
+        subject = ticket.get("subject", "")
+        try:
+            requester_name = subject.split("Request for ", 1)[1].split(" : ", 1)[0].strip()
+            app_name = _APP_NAME_OVERRIDES.get(requester_name)
+        except IndexError:
+            pass
+    ticket["application_name"] = app_name
 
     # Experiment status
     # Resolved = 4, Closed = 5
