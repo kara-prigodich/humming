@@ -33,9 +33,12 @@ def _fs_auth():
 
 
 def fetch_tickets():
-    """Fetch all open tickets, handling FreshService pagination."""
+    """Fetch tickets updated since the start of the current month."""
+    now   = datetime.now(timezone.utc)
+    since = f"{now.year}-{now.month:02d}-01T00:00:00Z"
+
     url    = f"https://{DOMAIN}.freshservice.com/api/v2/tickets"
-    params = {"per_page": 100, "page": 1}
+    params = {"updated_since": since, "per_page": 100, "page": 1}
 
     all_tickets = []
     while True:
@@ -48,6 +51,15 @@ def fetch_tickets():
         params["page"] += 1
 
     return all_tickets
+
+
+def fetch_one_ticket():
+    """Fetch a single ticket — used only by /api/debug."""
+    url  = f"https://{DOMAIN}.freshservice.com/api/v2/tickets"
+    resp = requests.get(url, auth=_fs_auth(), params={"per_page": 1, "page": 1}, timeout=15)
+    resp.raise_for_status()
+    tickets = resp.json().get("tickets", [])
+    return tickets[0] if tickets else {}
 
 
 def _parse_date(value):
@@ -343,11 +355,9 @@ def api_data():
 def api_debug():
     """Return the raw first ticket so you can inspect custom_fields slugs."""
     try:
-        tickets = fetch_tickets()
+        sample = fetch_one_ticket()
     except requests.RequestException as exc:
         return jsonify(error=str(exc)), 502
-
-    sample = tickets[0] if tickets else {}
     return jsonify(
         field_config=dict(
             FIELD_START_DATE=FIELD_START_DATE,
