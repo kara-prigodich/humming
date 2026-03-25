@@ -27,11 +27,9 @@ if _MISSING:
 
 # ── FreshService helpers ─────────────────────────────────────────────────────
 
-def _fs_headers():
-    return {
-        "Authorization": f"Basic {API_KEY}",
-        "Content-Type": "application/json",
-    }
+def _fs_auth():
+    """requests auth tuple — handles Base64 encoding automatically."""
+    return (API_KEY, "X")
 
 
 def fetch_tickets():
@@ -46,7 +44,7 @@ def fetch_tickets():
 
     all_tickets = []
     while True:
-        resp = requests.get(url, headers=_fs_headers(), params=params, timeout=15)
+        resp = requests.get(url, auth=_fs_auth(), params=params, timeout=15)
         resp.raise_for_status()
         page_tickets = resp.json().get("tickets", [])
         all_tickets.extend(page_tickets)
