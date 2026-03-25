@@ -61,7 +61,25 @@ def fetch_tickets():
             break
         params["page"] += 1
 
+    # Enrich each ticket with fields from its requested items
+    for ticket in all_tickets:
+        _merge_requested_item_fields(ticket)
+
     return all_tickets
+
+
+def _merge_requested_item_fields(ticket):
+    """Fetch the first requested item for a ticket and merge its custom_fields in."""
+    try:
+        url  = f"https://{DOMAIN}.freshservice.com/api/v2/tickets/{ticket['id']}/requested_items"
+        resp = requests.get(url, auth=_fs_auth(), timeout=15)
+        if not resp.ok:
+            return
+        items = resp.json().get("requested_items", [])
+        if items:
+            ticket.setdefault("custom_fields", {}).update(items[0].get("custom_fields") or {})
+    except requests.RequestException:
+        pass  # best-effort; calculated fields will show None if missing
 
 
 def fetch_one_ticket():
