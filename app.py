@@ -1,6 +1,7 @@
 import os
 import sys
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timezone
 from flask import Flask, jsonify, render_template_string
 from dotenv import load_dotenv
@@ -61,9 +62,9 @@ def fetch_tickets():
             break
         params["page"] += 1
 
-    # Enrich each ticket with fields from its requested items
-    for ticket in all_tickets:
-        _merge_requested_item_fields(ticket)
+    # Enrich all tickets in parallel (one API call per ticket → thread pool)
+    with ThreadPoolExecutor(max_workers=min(len(all_tickets), 10)) as pool:
+        list(pool.map(_merge_requested_item_fields, all_tickets))
 
     return all_tickets
 
