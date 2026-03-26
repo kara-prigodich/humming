@@ -1,0 +1,12 @@
+# Next.js
+.next/
+out/
+
+# Dependencies
+node_modules/
+
+# Env files — keep .env.local as a template (API key is a placeholder)
+# .env.local  ← intentionally tracked as a template
+
+# OS
+.DS_Store
